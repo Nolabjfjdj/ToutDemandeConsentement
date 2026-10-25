@@ -1,0 +1,70 @@
+name: Inspect Everything Consent JAR
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "EverythingConsent-forge-1.20.1-1.1.jar"
+      - ".github/workflows/inspect-jar.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify and inspect JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR="EverythingConsent-forge-1.20.1-1.1.jar"
+          test -f "$JAR"
+          mkdir -p inspection/languages
+          unzip -l "$JAR" > inspection/jar-contents.txt
+          unzip -Z1 "$JAR" | grep -E '^assets/[^/]+/lang/[^/]+\.json$' > inspection/language-files.txt || true
+          while IFS= read -r file; do
+            if [ -n "$file" ]; then
+              mkdir -p "inspection/languages/$(dirname "$file")"
+              unzip -p "$JAR" "$file" > "inspection/languages/$file"
+            fi
+          done < inspection/language-files.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          output = []
+          for path in sorted(Path("inspection/languages").rglob("*.json")):
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+                  output.append(f"## {path}\n")
+                  if isinstance(data, dict):
+                      for key, value in data.items():
+                          output.append(f"{key} = {value}\n")
+                  else:
+                      output.append(f"Unexpected JSON type: {type(data).__name__}\n")
+              except Exception as exc:
+                  output.append(f"## {path}\nCould not parse JSON: {exc}\n")
+          Path("inspection/translations-report.txt").write_text(
+              "\n".join(output) if output else "No JSON language files found in the JAR.\n",
+              encoding="utf-8"
+          )
+          PY
+          printf 'JAR: %s\n' "$JAR" > inspection/summary.txt
+          printf 'Size: ' >> inspection/summary.txt
+          stat -c '%s bytes' "$JAR" >> inspection/summary.txt
+          printf '\nLanguage files found:\n' >> inspection/summary.txt
+          cat inspection/language-files.txt >> inspection/summary.txt
+          printf '\nTop-level metadata:\n' >> inspection/summary.txt
+          unzip -Z1 "$JAR" | grep -E '(^META-INF/mods\.toml$|^fabric\.mod\.json$|^META-INF/MANIFEST\.MF$)' >> inspection/summary.txt || true
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: everything-consent-jar-inspection
+          path: inspection/
+          if-no-files-found: error
+          retention-days: 7

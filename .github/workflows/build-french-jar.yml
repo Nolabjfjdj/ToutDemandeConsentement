@@ -1,0 +1,63 @@
+name: Build French Everything Consent JAR
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "EverythingConsent-forge-1.20.1-1.1.jar"
+      - ".github/workflows/build-french-jar.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add French language file to original JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGINAL="EverythingConsent-forge-1.20.1-1.1.jar"
+          OUTPUT="EverythingConsent-forge-1.20.1-1.1-fr-FR.jar"
+          ASSET_PATH="assets/the_worst_possible_annoyance_mod/lang"
+          test -f "$ORIGINAL"
+          mkdir -p "$ASSET_PATH"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          translations = {
+              "key.categories.the_worst_possible_annoyance_mod": "Le mod d'agacement ultime",
+              "key.the_worst_possible_annoyance_mod.shop": "Ouvrir / fermer la boutique"
+          }
+          path = Path("assets/the_worst_possible_annoyance_mod/lang/fr_fr.json")
+          path.write_text(json.dumps(translations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+          cp "$ORIGINAL" "$OUTPUT"
+          zip -q "$OUTPUT" "$ASSET_PATH/fr_fr.json"
+          unzip -t "$OUTPUT"
+          unzip -p "$OUTPUT" "$ASSET_PATH/fr_fr.json" > /tmp/fr_fr.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          original = json.loads(Path("assets/the_worst_possible_annoyance_mod/lang/fr_fr.json").read_text(encoding="utf-8"))
+          packaged = json.loads(Path("/tmp/fr_fr.json").read_text(encoding="utf-8"))
+          assert original == packaged, "The packaged French language file does not match the source file"
+          assert len(packaged) == 2, f"Unexpected translation count: {len(packaged)}"
+          print(f"Validated {len(packaged)} French translation entries.")
+          PY
+          test "$(unzip -Z1 "$OUTPUT" | grep -c '^assets/the_worst_possible_annoyance_mod/lang/fr_fr\.json$')" -eq 1
+          ls -lh "$OUTPUT"
+
+      - name: Upload French JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: EverythingConsent-Forge-1.20.1-French
+          path: EverythingConsent-forge-1.20.1-1.1-fr-FR.jar
+          if-no-files-found: error
+          retention-days: 7

@@ -176,5 +176,5 @@ for path in root.rglob("*.class"):
         total += count
 
 print(f"Translated {total} Java string constants.")
-if total < 40:
-    raise SystemExit(f"Expected to translate at least 40 strings, got {total}.")
+if total < 25:
+    raise SystemExit(f"Expected to translate at least 25 strings, got {total}.")

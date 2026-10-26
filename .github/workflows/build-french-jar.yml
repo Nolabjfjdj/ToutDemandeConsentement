@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "EverythingConsent-forge-1.20.1-1.1.jar"
+      - "scripts/translate_class_strings.py"
       - ".github/workflows/build-french-jar.yml"
 
 permissions:
@@ -17,41 +18,44 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Add French language file to original JAR
+      - name: Translate embedded Java strings and add French locale
         shell: bash
         run: |
           set -euo pipefail
           ORIGINAL="EverythingConsent-forge-1.20.1-1.1.jar"
           OUTPUT="EverythingConsent-forge-1.20.1-1.1-fr-FR.jar"
-          ASSET_PATH="assets/the_worst_possible_annoyance_mod/lang"
+          WORK="$RUNNER_TEMP/jar-work"
+          LANG_DIR="assets/the_worst_possible_annoyance_mod/lang"
           test -f "$ORIGINAL"
-          mkdir -p "$ASSET_PATH"
+          mkdir -p "$WORK"
+          unzip -q "$ORIGINAL" -d "$WORK"
+          python scripts/translate_class_strings.py "$WORK"
+          mkdir -p "$WORK/$LANG_DIR"
           python - <<'PY'
           import json
           from pathlib import Path
-
           translations = {
-              "key.categories.the_worst_possible_annoyance_mod": "Le mod d'agacement ultime",
+              "key.categories.the_worst_possible_annoyance_mod": "Tout Demande Consentement",
               "key.the_worst_possible_annoyance_mod.shop": "Ouvrir / fermer la boutique"
           }
-          path = Path("assets/the_worst_possible_annoyance_mod/lang/fr_fr.json")
-          path.write_text(json.dumps(translations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          path = Path("$WORK") / "$LANG_DIR" / "fr_fr.json"
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(translations, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
           PY
-          cp "$ORIGINAL" "$OUTPUT"
-          zip -q "$OUTPUT" "$ASSET_PATH/fr_fr.json"
+          (cd "$WORK" && zip -qr "$GITHUB_WORKSPACE/$OUTPUT" .)
           unzip -t "$OUTPUT"
-          unzip -p "$OUTPUT" "$ASSET_PATH/fr_fr.json" > /tmp/fr_fr.json
           python - <<'PY'
-          import json
+          import json, zipfile
           from pathlib import Path
-
-          original = json.loads(Path("assets/the_worst_possible_annoyance_mod/lang/fr_fr.json").read_text(encoding="utf-8"))
-          packaged = json.loads(Path("/tmp/fr_fr.json").read_text(encoding="utf-8"))
-          assert original == packaged, "The packaged French language file does not match the source file"
-          assert len(packaged) == 2, f"Unexpected translation count: {len(packaged)}"
-          print(f"Validated {len(packaged)} French translation entries.")
+          jar = Path("EverythingConsent-forge-1.20.1-1.1-fr-FR.jar")
+          with zipfile.ZipFile(jar) as z:
+              lang = json.loads(z.read("assets/the_worst_possible_annoyance_mod/lang/fr_fr.json"))
+              assert len(lang) == 2
+              class_files = [n for n in z.namelist() if n.endswith(".class")]
+              assert class_files, "No class files in output JAR"
+              assert z.testzip() is None, "Corrupt ZIP entry"
+          print(f"Validated JAR structure, {len(class_files)} class files, and {len(lang)} language keys.")
           PY
-          test "$(unzip -Z1 "$OUTPUT" | grep -c '^assets/the_worst_possible_annoyance_mod/lang/fr_fr\.json$')" -eq 1
           ls -lh "$OUTPUT"
 
       - name: Upload French JAR

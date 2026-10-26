@@ -17,49 +17,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify and inspect JAR
+      - name: Inspect JAR and decompile classes
         shell: bash
         run: |
           set -euo pipefail
           JAR="EverythingConsent-forge-1.20.1-1.1.jar"
-          test -f "$JAR"
-          mkdir -p inspection/languages
+          mkdir -p inspection
           unzip -l "$JAR" > inspection/jar-contents.txt
-          unzip -Z1 "$JAR" | grep -E '^assets/[^/]+/lang/[^/]+\.json$' > inspection/language-files.txt || true
+          unzip -p "$JAR" META-INF/mods.toml > inspection/mods.toml
+          unzip -Z1 "$JAR" | grep '\\.class$' > inspection/classes.txt
           while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              mkdir -p "inspection/languages/$(dirname "$file")"
-              unzip -p "$JAR" "$file" > "inspection/languages/$file"
-            fi
+            unzip -p "$JAR" "$file" | strings -n 3 | sed "s#^#$file: #" >> inspection/class-strings.txt
+          done < inspection/classes.txt
+          curl -fsSL https://www.benf.org/other/cfr/cfr-0.152.jar -o /tmp/cfr.jar
+          mkdir -p inspection/decompiled
+          java -jar /tmp/cfr.jar "$JAR" --outputdir inspection/decompiled --silent true
+          grep -RInE 'literal\\(|translatable\\(|Component\\.|new String|String ' inspection/decompiled > inspection/ui-string-candidates.txt || true
+          unzip -Z1 "$JAR" | grep -E '^assets/[^/]+/lang/[^/]+\\.json$' > inspection/language-files.txt || true
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            mkdir -p "inspection/languages/$(dirname "$file")"
+            unzip -p "$JAR" "$file" > "inspection/languages/$file"
           done < inspection/language-files.txt
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          output = []
-          for path in sorted(Path("inspection/languages").rglob("*.json")):
-              try:
-                  data = json.loads(path.read_text(encoding="utf-8"))
-                  output.append(f"## {path}\n")
-                  if isinstance(data, dict):
-                      for key, value in data.items():
-                          output.append(f"{key} = {value}\n")
-                  else:
-                      output.append(f"Unexpected JSON type: {type(data).__name__}\n")
-              except Exception as exc:
-                  output.append(f"## {path}\nCould not parse JSON: {exc}\n")
-          Path("inspection/translations-report.txt").write_text(
-              "\n".join(output) if output else "No JSON language files found in the JAR.\n",
-              encoding="utf-8"
-          )
-          PY
-          printf 'JAR: %s\n' "$JAR" > inspection/summary.txt
+          printf 'JAR: %s\\n' "$JAR" > inspection/summary.txt
           printf 'Size: ' >> inspection/summary.txt
           stat -c '%s bytes' "$JAR" >> inspection/summary.txt
-          printf '\nLanguage files found:\n' >> inspection/summary.txt
+          printf '\\nLanguage files found:\\n' >> inspection/summary.txt
           cat inspection/language-files.txt >> inspection/summary.txt
-          printf '\nTop-level metadata:\n' >> inspection/summary.txt
-          unzip -Z1 "$JAR" | grep -E '(^META-INF/mods\.toml$|^fabric\.mod\.json$|^META-INF/MANIFEST\.MF$)' >> inspection/summary.txt || true
 
       - name: Upload inspection report
         uses: actions/upload-artifact@v4

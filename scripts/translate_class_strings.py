@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import json
 import struct
 import sys
 from pathlib import Path
@@ -19,7 +18,7 @@ TRANSLATIONS = {
     "Get ": "Être ",
     "exploded": "explosé",
     "Get hit by ": "Être frappé par ",
-    " for ": " pendant ",
+    " for ": " pour ",
     " damage?": " dégâts ?",
     "Interact with ": "Interagir avec ",
     "Attack ": "Attaquer ",
@@ -36,7 +35,6 @@ TRANSLATIONS = {
     "[Everything Consent] ": "[Tout Demande Consentement] ",
     "Phase: ": "Phase : ",
     "World age: ": "Âge du monde : ",
-    "s": "s",
     " (game time ": " (temps de jeu ",
     "Grace: ": "Période de grâce : ",
     "active": "active",
@@ -100,42 +98,79 @@ def patch_class(data):
     if data[:4] != b"\xca\xfe\xba\xbe":
         return data, 0
     cp_count = struct.unpack_from(">H", data, 8)[0]
+    entries = {}
+    string_indexes = set()
     pos = 10
-    out = bytearray(data[:10])
-    changed = 0
     i = 1
     while i < cp_count:
+        start = pos
         tag = data[pos]
-        out.append(tag)
         pos += 1
         if tag == 1:
             length = struct.unpack_from(">H", data, pos)[0]
-            pos += 2
-            raw = data[pos:pos + length]
-            pos += length
-            try:
-                value = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                value = raw.decode("utf-8", errors="replace")
-            replacement = TRANSLATIONS.get(value, value)
-            encoded = replacement.encode("utf-8")
-            if replacement != value:
-                changed += 1
-            out.extend(struct.pack(">H", len(encoded)))
-            out.extend(encoded)
+            pos += 2 + length
         elif tag in (3, 4):
-            out.extend(data[pos:pos + 4]); pos += 4
+            pos += 4
         elif tag in (5, 6):
-            out.extend(data[pos:pos + 8]); pos += 8
+            pos += 8
+            entries[i] = (tag, start, pos)
             i += 1
         elif tag in (7, 8, 16, 19, 20):
-            out.extend(data[pos:pos + 2]); pos += 2
+            index = struct.unpack_from(">H", data, pos)[0]
+            pos += 2
+            if tag == 8:
+                string_indexes.add(index)
         elif tag in (9, 10, 11, 12, 17, 18):
-            out.extend(data[pos:pos + 4]); pos += 4
+            pos += 4
         elif tag == 15:
-            out.extend(data[pos:pos + 3]); pos += 3
+            pos += 3
         else:
             raise ValueError(f"Unsupported class constant-pool tag {tag}")
+        entries[i] = (tag, start, pos)
+        i += 1
+
+    out = bytearray(data[:10])
+    changed = 0
+    pos = 10
+    i = 1
+    while i < cp_count:
+        tag = data[pos]
+        start = pos
+        pos += 1
+        if tag == 1:
+            length = struct.unpack_from(">H", data, pos)[0]
+            raw = data[pos + 2:pos + 2 + length]
+            pos += 2 + length
+            if i in string_indexes:
+                try:
+                    value = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    value = raw.decode("utf-8", errors="replace")
+                replacement = TRANSLATIONS.get(value, value)
+                encoded = replacement.encode("utf-8")
+                if replacement != value:
+                    changed += 1
+                out.append(tag)
+                out.extend(struct.pack(">H", len(encoded)))
+                out.extend(encoded)
+            else:
+                out.extend(data[start:pos])
+        elif tag in (3, 4):
+            pos += 4
+            out.extend(data[start:pos])
+        elif tag in (5, 6):
+            pos += 8
+            out.extend(data[start:pos])
+            i += 1
+        elif tag in (7, 8, 16, 19, 20):
+            pos += 2
+            out.extend(data[start:pos])
+        elif tag in (9, 10, 11, 12, 17, 18):
+            pos += 4
+            out.extend(data[start:pos])
+        elif tag == 15:
+            pos += 3
+            out.extend(data[start:pos])
         i += 1
     out.extend(data[pos:])
     return bytes(out), changed

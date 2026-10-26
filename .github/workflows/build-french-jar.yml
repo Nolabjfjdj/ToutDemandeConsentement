@@ -31,14 +31,14 @@ jobs:
           unzip -q "$ORIGINAL" -d "$WORK"
           python scripts/translate_class_strings.py "$WORK"
           mkdir -p "$WORK/$LANG_DIR"
-          python - <<'PY'
-          import json
+          WORK="$WORK" LANG_DIR="$LANG_DIR" python - <<'PY'
+          import json, os
           from pathlib import Path
           translations = {
               "key.categories.the_worst_possible_annoyance_mod": "Tout Demande Consentement",
               "key.the_worst_possible_annoyance_mod.shop": "Ouvrir / fermer la boutique"
           }
-          path = Path("$WORK") / "$LANG_DIR" / "fr_fr.json"
+          path = Path(os.environ["WORK"]) / os.environ["LANG_DIR"] / "fr_fr.json"
           path.parent.mkdir(parents=True, exist_ok=True)
           path.write_text(json.dumps(translations, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
           PY
